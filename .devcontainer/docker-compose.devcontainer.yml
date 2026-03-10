@@ -1,0 +1,23 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      - ..:/workspace:Z
+      - ${HOME}/.claude:/root/.claude:Z
+    working_dir: /workspace
+    command: sleep infinity
+    environment:
+      - REDIS_URL=redis:6379
+    depends_on:
+      - redis
+
+  redis:
+    image: docker.io/library/redis:7-alpine
+    command: redis-server --appendonly yes
+    volumes:
+      - redis-data:/data
+
+volumes:
+  redis-data:
