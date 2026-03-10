@@ -76,10 +76,26 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Write(buf.Bytes())
 }
 
-func newRouter(s *server) *chi.Mux {
+func corsMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
+func newRouter(s *server, allowedOrigin string) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
+	r.Use(corsMiddleware(allowedOrigin))
 	r.Get("/counter/{siteID}", s.getCounter)
 	r.Post("/counter/{siteID}/increment", s.incrementCounter)
 	return r
@@ -99,6 +115,11 @@ func main() {
 		log.Fatalf("could not connect to redis: %v", err)
 	}
 
+	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
+	if allowedOrigin == "" {
+		allowedOrigin = "*"
+	}
+
 	addr := os.Getenv("ADDR")
 	if addr == "" {
 		addr = ":8080"
@@ -106,7 +127,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      newRouter(&server{rdb: rdb}),
+		Handler:      newRouter(&server{rdb: rdb}, allowedOrigin),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,

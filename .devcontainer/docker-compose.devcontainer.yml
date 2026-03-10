@@ -9,7 +9,7 @@ services:
     working_dir: /workspace
     command: sleep infinity
     environment:
-      - REDIS_URL=redis:6379
+      - REDIS_ADDR=redis:6379
     depends_on:
       - redis
 

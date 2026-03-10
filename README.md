@@ -47,6 +47,7 @@ Invalid: `-mysite`, `my site`, `has/slash`
 |---|---|---|
 | `REDIS_ADDR` | `localhost:6379` | Redis server address |
 | `ADDR` | `:8080` | Address the HTTP server binds to |
+| `ALLOWED_ORIGIN` | `*` | Value for `Access-Control-Allow-Origin` header. Set to a specific origin (e.g. `https://bcm.co`) to restrict browser access in production. |
 
 ## Deployment
 
