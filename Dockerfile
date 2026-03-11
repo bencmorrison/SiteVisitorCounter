@@ -1,9 +1,10 @@
-FROM golang:1.24-alpine AS builder
+FROM golang:1.23-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o site-counter .
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-w -s" -o site-counter .
 
 FROM alpine:3.21
 RUN adduser -D -H appuser
