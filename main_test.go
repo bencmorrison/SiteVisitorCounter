@@ -47,7 +47,7 @@ func decodeBody(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 
 func TestGetCounter_NewSite(t *testing.T) {
 	s := setupTest(t)
-	r := newRouter(s, "*")
+	r := newRouter(s, []string{"*"})
 	cleanupKey(t, s, "new-site")
 	defer cleanupKey(t, s, "new-site")
 
@@ -67,7 +67,7 @@ func TestGetCounter_NewSite(t *testing.T) {
 
 func TestIncrementCounter(t *testing.T) {
 	s := setupTest(t)
-	r := newRouter(s, "*")
+	r := newRouter(s, []string{"*"})
 	cleanupKey(t, s, "inc-site")
 	defer cleanupKey(t, s, "inc-site")
 
@@ -89,7 +89,7 @@ func TestIncrementCounter(t *testing.T) {
 
 func TestGetDoesNotIncrement(t *testing.T) {
 	s := setupTest(t)
-	r := newRouter(s, "*")
+	r := newRouter(s, []string{"*"})
 	cleanupKey(t, s, "get-site")
 	defer cleanupKey(t, s, "get-site")
 
@@ -110,7 +110,7 @@ func TestGetDoesNotIncrement(t *testing.T) {
 
 func TestSitesAreIsolated(t *testing.T) {
 	s := setupTest(t)
-	r := newRouter(s, "*")
+	r := newRouter(s, []string{"*"})
 	cleanupKey(t, s, "site-a")
 	cleanupKey(t, s, "site-b")
 	defer cleanupKey(t, s, "site-a")
@@ -140,7 +140,7 @@ func TestSitesAreIsolated(t *testing.T) {
 
 func TestInvalidSiteID(t *testing.T) {
 	s := setupTest(t)
-	r := newRouter(s, "*")
+	r := newRouter(s, []string{"*"})
 
 	// cases that reach the handler and should return 400
 	badIDs := []string{
@@ -170,7 +170,7 @@ func TestInvalidSiteID(t *testing.T) {
 
 func TestConcurrentIncrements(t *testing.T) {
 	s := setupTest(t)
-	r := newRouter(s, "*")
+	r := newRouter(s, []string{"*"})
 	siteID := "concurrent-site"
 	cleanupKey(t, s, siteID)
 	defer cleanupKey(t, s, siteID)
@@ -207,7 +207,7 @@ func TestCORSHeaders(t *testing.T) {
 	s := setupTest(t)
 
 	t.Run("wildcard", func(t *testing.T) {
-		r := newRouter(s, "*")
+		r := newRouter(s, []string{"*"})
 		req := httptest.NewRequest(http.MethodGet, "/counter/cors-site", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
@@ -215,21 +215,57 @@ func TestCORSHeaders(t *testing.T) {
 		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "*" {
 			t.Errorf("expected *, got %q", got)
 		}
+		if got := w.Header().Get("Vary"); got != "" {
+			t.Errorf("expected no Vary header for wildcard, got %q", got)
+		}
 	})
 
-	t.Run("specific origin", func(t *testing.T) {
-		r := newRouter(s, "https://bcm.co")
+	t.Run("specific origin allowed", func(t *testing.T) {
+		r := newRouter(s, []string{"https://bcm.co"})
 		req := httptest.NewRequest(http.MethodGet, "/counter/cors-site", nil)
+		req.Header.Set("Origin", "https://bcm.co")
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
 
 		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "https://bcm.co" {
 			t.Errorf("expected https://bcm.co, got %q", got)
 		}
+		if got := w.Header().Get("Vary"); got != "Origin" {
+			t.Errorf("expected Vary: Origin, got %q", got)
+		}
+	})
+
+	t.Run("specific origin denied", func(t *testing.T) {
+		r := newRouter(s, []string{"https://bcm.co"})
+		req := httptest.NewRequest(http.MethodGet, "/counter/cors-site", nil)
+		req.Header.Set("Origin", "https://evil.com")
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("expected no ACAO header, got %q", got)
+		}
+		if got := w.Header().Get("Vary"); got != "Origin" {
+			t.Errorf("expected Vary: Origin even for denied origin, got %q", got)
+		}
+	})
+
+	t.Run("no origin header", func(t *testing.T) {
+		r := newRouter(s, []string{"https://bcm.co"})
+		req := httptest.NewRequest(http.MethodGet, "/counter/cors-site", nil)
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+
+		if got := w.Header().Get("Access-Control-Allow-Origin"); got != "" {
+			t.Errorf("expected no ACAO header, got %q", got)
+		}
+		if got := w.Header().Get("Vary"); got != "Origin" {
+			t.Errorf("expected Vary: Origin, got %q", got)
+		}
 	})
 
 	t.Run("preflight", func(t *testing.T) {
-		r := newRouter(s, "*")
+		r := newRouter(s, []string{"*"})
 		req := httptest.NewRequest(http.MethodOptions, "/counter/cors-site", nil)
 		w := httptest.NewRecorder()
 		r.ServeHTTP(w, req)
@@ -241,4 +277,57 @@ func TestCORSHeaders(t *testing.T) {
 			t.Error("expected Access-Control-Allow-Methods header")
 		}
 	})
+}
+
+func TestParseOriginsText(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  []string
+	}{
+		{
+			name:  "simple list",
+			input: "https://a.com\nhttps://b.com\n",
+			want:  []string{"https://a.com", "https://b.com"},
+		},
+		{
+			name:  "comments ignored",
+			input: "# comment\nhttps://a.com\n# another\n",
+			want:  []string{"https://a.com"},
+		},
+		{
+			name:  "blank lines ignored",
+			input: "\nhttps://a.com\n\nhttps://b.com\n\n",
+			want:  []string{"https://a.com", "https://b.com"},
+		},
+		{
+			name:  "whitespace trimmed",
+			input: "  https://a.com  \n\t https://b.com\t\n",
+			want:  []string{"https://a.com", "https://b.com"},
+		},
+		{
+			name:  "empty input",
+			input: "",
+			want:  nil,
+		},
+		{
+			name:  "only comments and blanks",
+			input: "# comment\n\n# another\n",
+			want:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := parseOriginsText(tt.input)
+			if len(got) != len(tt.want) {
+				t.Fatalf("got %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("index %d: got %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
 }

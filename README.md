@@ -47,29 +47,45 @@ Invalid: `-mysite`, `my site`, `has/slash`
 |---|---|---|
 | `REDIS_ADDR` | `localhost:6379` | Redis server address |
 | `ADDR` | `:8080` | Address the HTTP server binds to |
-| `ALLOWED_ORIGIN` | `*` | Value for `Access-Control-Allow-Origin` header. Set to a specific origin (e.g. `https://bcm.co`) to restrict browser access in production. |
+| `ALLOWED_ORIGINS` | `*` | Comma-separated list of allowed CORS origins (e.g. `https://foo.com,https://bar.com`). Defaults to `*` if neither this nor `ALLOWED_ORIGINS_FILE` is set. |
+| `ALLOWED_ORIGINS_FILE` | — | Path to a file containing allowed CORS origins, one per line. Blank lines and lines starting with `#` are ignored. Combined with `ALLOWED_ORIGINS` if both are set. |
+
+When specific origins are configured, the server echoes the matched origin back in the `Access-Control-Allow-Origin` header (with a `Vary: Origin` header). Requests from unlisted origins receive no CORS headers.
+
+**Example origins file:**
+```
+# Allowed origins
+https://example.com
+https://app.example.com
+```
 
 ## Deployment
 
-### Docker
+### Pre-built image (recommended)
 
-Build and run standalone (bring your own Redis):
-```sh
-docker build -t site-visitor-counter .
-docker run -p 8080:8080 -e REDIS_ADDR=your-redis-host:6379 site-visitor-counter
+Images are published to the GitHub Container Registry for `linux/amd64` and `linux/arm64`:
+
+```
+ghcr.io/bencmorrison/sitevisitorcounter:latest
 ```
 
-### Docker Compose
+Pull and run (bring your own Redis):
+```sh
+docker pull ghcr.io/bencmorrison/sitevisitorcounter:latest
+docker run -p 8080:8080 -e REDIS_ADDR=your-redis-host:6379 ghcr.io/bencmorrison/sitevisitorcounter:latest
+```
 
-Example `docker-compose.yml` with Redis included:
+### Docker Compose with pre-built image
+
 ```yaml
 services:
   app:
-    build: .
+    image: ghcr.io/bencmorrison/sitevisitorcounter:latest
     ports:
       - "8080:8080"
     environment:
       REDIS_ADDR: redis:6379
+      ALLOWED_ORIGINS: https://example.com
     depends_on:
       - redis
   redis:
@@ -83,6 +99,13 @@ volumes:
 
 ```sh
 docker compose up
+```
+
+### Build from source
+
+```sh
+docker build -t site-visitor-counter .
+docker run -p 8080:8080 -e REDIS_ADDR=your-redis-host:6379 site-visitor-counter
 ```
 
 ### Run locally

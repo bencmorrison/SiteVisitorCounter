@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/signal"
 	"regexp"
+	"slices"
+	"strings"
 	"syscall"
 	"time"
 
@@ -76,10 +78,38 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Write(buf.Bytes())
 }
 
-func corsMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
+func parseOriginsText(text string) []string {
+	var origins []string
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" && !strings.HasPrefix(line, "#") {
+			origins = append(origins, line)
+		}
+	}
+	return origins
+}
+
+func corsMiddleware(allowedOrigins []string) func(http.Handler) http.Handler {
+	wildcard := slices.Contains(allowedOrigins, "*")
+	originSet := make(map[string]bool)
+	if !wildcard {
+		for _, o := range allowedOrigins {
+			originSet[o] = true
+		}
+	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.Header().Set("Access-Control-Allow-Origin", allowedOrigin)
+			if wildcard {
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+			} else {
+				// Always set Vary so caches don't serve the wrong response
+				// regardless of whether the origin is allowed or not.
+				w.Header().Add("Vary", "Origin")
+				origin := r.Header.Get("Origin")
+				if originSet[origin] {
+					w.Header().Set("Access-Control-Allow-Origin", origin)
+				}
+			}
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 			if r.Method == http.MethodOptions {
@@ -91,11 +121,11 @@ func corsMiddleware(allowedOrigin string) func(http.Handler) http.Handler {
 	}
 }
 
-func newRouter(s *server, allowedOrigin string) *chi.Mux {
+func newRouter(s *server, allowedOrigins []string) *chi.Mux {
 	r := chi.NewRouter()
 	r.Use(middleware.Logger)
 	r.Use(middleware.Recoverer)
-	r.Use(corsMiddleware(allowedOrigin))
+	r.Use(corsMiddleware(allowedOrigins))
 	r.Get("/counter/{siteID}", s.getCounter)
 	r.Post("/counter/{siteID}/increment", s.incrementCounter)
 	return r
@@ -115,9 +145,24 @@ func main() {
 		log.Fatalf("could not connect to redis: %v", err)
 	}
 
-	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
-	if allowedOrigin == "" {
-		allowedOrigin = "*"
+	var allowedOrigins []string
+	if filePath := os.Getenv("ALLOWED_ORIGINS_FILE"); filePath != "" {
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			log.Fatalf("could not read ALLOWED_ORIGINS_FILE: %v", err)
+		}
+		allowedOrigins = append(allowedOrigins, parseOriginsText(string(data))...)
+	}
+	if origin := os.Getenv("ALLOWED_ORIGINS"); origin != "" {
+		for _, o := range strings.Split(origin, ",") {
+			if o = strings.TrimSpace(o); o != "" {
+				allowedOrigins = append(allowedOrigins, o)
+			}
+		}
+	}
+	if len(allowedOrigins) == 0 {
+		log.Println("warning: ALLOWED_ORIGINS and ALLOWED_ORIGINS_FILE are not set, defaulting to * (all origins allowed)")
+		allowedOrigins = []string{"*"}
 	}
 
 	addr := os.Getenv("ADDR")
@@ -127,7 +172,7 @@ func main() {
 
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      newRouter(&server{rdb: rdb}, allowedOrigin),
+		Handler:      newRouter(&server{rdb: rdb}, allowedOrigins),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
